@@ -1,0 +1,63 @@
+name: optilint
+description: Find slow JavaScript and TypeScript and annotate it on the pull request
+author: optilint
+branding:
+  icon: zap
+  color: orange
+
+inputs:
+  paths:
+    description: Files or folders to lint, separated by spaces. Default the working directory (what git lists in it).
+    default: "."
+  version:
+    description: The @optilint/cli version to run (an npm version or range).
+    default: "0"
+  working-directory:
+    description: Where to run optilint; its optilint.json and tsconfig.json apply.
+    default: "."
+  min-impact:
+    description: Only report findings of at least this impact (high, medium or low).
+    default: low
+  fail-on:
+    description: "findings: fail when any finding is not set to info (optilint's exit code). error: fail only on findings whose severity is error. never: only annotate."
+    default: findings
+  sarif:
+    description: Also upload SARIF to GitHub code scanning (needs the security-events write permission).
+    default: "false"
+  args:
+    description: More optilint flags, separated by spaces (for example "--disable loops --max-slowdown 0%").
+    default: ""
+
+outputs:
+  findings:
+    description: The number of findings.
+    value: ${{ steps.lint.outputs.findings }}
+  sarif-file:
+    description: The SARIF file, when sarif is true.
+    value: ${{ steps.lint.outputs.sarif-file }}
+
+runs:
+  using: composite
+  steps:
+    - id: lint
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        OPTILINT_VERSION: ${{ inputs.version }}
+        OPTILINT_PATHS: ${{ inputs.paths }}
+        OPTILINT_MIN_IMPACT: ${{ inputs.min-impact }}
+        OPTILINT_FAIL_ON: ${{ inputs.fail-on }}
+        OPTILINT_SARIF: ${{ inputs.sarif }}
+        OPTILINT_ARGS: ${{ inputs.args }}
+      run: ${{ github.action_path }}/run.sh
+    - if: ${{ inputs.sarif == 'true' && !cancelled() }}
+      uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
+      with:
+        sarif_file: ${{ steps.lint.outputs.sarif-file }}
+        category: optilint
+    - if: ${{ !cancelled() }}
+      shell: bash
+      env:
+        FAILED: ${{ steps.lint.outputs.failed }}
+        FAIL_ON: ${{ inputs.fail-on }}
+      run: '[ "$FAILED" != "true" ] || { echo "optilint found problems (fail-on: $FAIL_ON)"; exit 1; }'
