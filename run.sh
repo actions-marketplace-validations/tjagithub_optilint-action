@@ -9,9 +9,17 @@ read -ra paths <<<"$OPTILINT_PATHS"
 read -ra extra <<<"$OPTILINT_ARGS"
 cmd=(npx --yes "@optilint/cli@$OPTILINT_VERSION" ${paths[@]+"${paths[@]}"} --min-impact "$OPTILINT_MIN_IMPACT" ${extra[@]+"${extra[@]}"})
 
+# optilint reports paths from where it runs; GitHub wants them from the repository root.
+prefix=$(realpath --relative-to="${GITHUB_WORKSPACE:-$PWD}" "$PWD")
+[ "$prefix" = . ] && prefix='' || prefix="$prefix/"
+
 out=$(mktemp)
 status=0
 "${cmd[@]}" --format github >"$out" || status=$?
+if [ -n "$prefix" ]; then
+  esc=$(printf '%s' "$prefix" | sed -e 's/%/%25/g' -e 's/:/%3A/g' -e 's/,/%2C/g' -e 's/[#&\\]/\\&/g')
+  sed -i.bak "s#^\(::[a-z]* file=\)\([^/]\)#\1${esc}\2#" "$out"
+fi
 cat "$out"
 if [ "$status" -gt 1 ]; then
   echo "::error::optilint exited with $status"
@@ -33,5 +41,9 @@ echo "optilint: $findings finding(s)" >>"$GITHUB_STEP_SUMMARY"
 if [ "$OPTILINT_SARIF" = "true" ]; then
   sarif="$RUNNER_TEMP/optilint.sarif"
   "${cmd[@]}" --format sarif >"$sarif" || [ $? -eq 1 ]
+  if [ -n "$prefix" ]; then
+    jq --arg p "$prefix" '(.runs[].results[].locations[].physicalLocation.artifactLocation | select(.uriBaseId == "%SRCROOT%") | .uri) |= ($p + .)' "$sarif" >"$sarif.tmp"
+    mv "$sarif.tmp" "$sarif"
+  fi
   echo "sarif-file=$sarif" >>"$GITHUB_OUTPUT"
 fi
